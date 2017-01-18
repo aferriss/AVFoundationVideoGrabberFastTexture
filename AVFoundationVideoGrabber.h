@@ -37,6 +37,9 @@ class AVFoundationVideoGrabber;
 -(void)setDevice:(int)_device;
 -(void)eraseGrabberPtr;
 
+-(void)switchCamera;
+-(AVCaptureDevice *) cameraWithPosition:(AVCaptureDevicePosition) position;
+
 // focus
 -(bool)setContinuousAutoFocus;
 -(bool)focusOnce;
@@ -73,6 +76,8 @@ class AVFoundationVideoGrabber{
 	
 		void stopCapture();
 		void startCapture();
+	
+		void switchCamera();
 	
 		bool isFrameNew();
 		

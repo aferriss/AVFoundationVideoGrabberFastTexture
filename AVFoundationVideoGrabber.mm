@@ -154,9 +154,9 @@
 		
 		
 //		NSString * preset = AVCaptureSessionPresetMedium;
-		NSString * preset;// = AVCaptureSessionPreset1280x720;
-		width	= 640;
-		height	= 1136;
+		NSString * preset = AVCaptureSessionPreset1280x720;
+		width	= w;
+		height	= h;
 		
 		texWidth = w;
 		texHeight = h;
@@ -188,7 +188,7 @@
 				height	= h;		
 			}
 		}
-//		[self.captureSession setSessionPreset:preset]; 
+		[self.captureSession setSessionPreset:preset]; 
 		
 		// We add input and output
 		[self.captureSession addInput:captureInput];
@@ -230,6 +230,62 @@
 	return NO;
 }
 
+//from http://stackoverflow.com/questions/20864372/switch-cameras-with-avcapturesession
+-(void) switchCamera{
+	//Change camera source
+	if(self.captureSession)
+	{
+		
+		//Indicate that some changes will be made to the session
+		[self.captureSession beginConfiguration];
+		
+		//Remove existing input
+		AVCaptureInput* currentCameraInput = [self.captureSession.inputs objectAtIndex:0];
+		[self.captureSession removeInput:currentCameraInput];
+		
+		//Get new input
+		AVCaptureDevice *newCamera = nil;
+		if(((AVCaptureDeviceInput*)currentCameraInput).device.position == AVCaptureDevicePositionBack)
+		{
+			newCamera = [self cameraWithPosition:AVCaptureDevicePositionFront];
+		}
+		else
+		{
+			newCamera = [self cameraWithPosition:AVCaptureDevicePositionBack];
+		}
+		
+		//Add input to session
+		NSError *err = nil;
+		AVCaptureDeviceInput *newVideoInput = [[AVCaptureDeviceInput alloc] initWithDevice:newCamera error:&err];
+		if(!newVideoInput || err)
+		{
+			NSLog(@"Error creating capture device input: %@", err.localizedDescription);
+		}
+		else
+		{
+			[self.captureSession addInput:newVideoInput];
+		}
+		
+		//Commit all the configuration changes at once
+		[self.captureSession commitConfiguration];
+		 
+		cout<<"test"<<endl;
+	}
+}
+
+
+
+// Find a camera with the specified AVCaptureDevicePosition, returning nil if one is not found
+- (AVCaptureDevice *) cameraWithPosition:(AVCaptureDevicePosition) position
+{
+	NSArray *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
+	for (AVCaptureDevice *device_ in devices)
+	{
+		if ([device_ position] == position) return device_;
+	}
+	return nil;
+}
+
 -(void) startCapture{
 
 	if( !bInitCalled ){
@@ -263,26 +319,51 @@
 
 -(bool)touchFocusAt:(CGPoint)focusPoint{
 	bool r = false;
-	if ( captureInput.device.focusPointOfInterestSupported){
-		[captureInput.device lockForConfiguration:nil];
-		captureInput.device.focusPointOfInterest = focusPoint;
+	AVCaptureInput* currentCameraInput = [self.captureSession.inputs objectAtIndex:0];
+	AVCaptureDevice *acd = ((AVCaptureDeviceInput*)currentCameraInput).device;
+	
+	//the facetime camera can not focus per apple spec
+	if(acd.focusPointOfInterestSupported){
+		[acd lockForConfiguration:nil];
+		acd.focusPointOfInterest = focusPoint;
 		r = [self focusOnce];
 		NSLog(@"focusOnce: %d", r);
-		[captureInput.device unlockForConfiguration];
+		[acd unlockForConfiguration];
 	}
+	
+//	if ( captureInput.device.focusPointOfInterestSupported){
+//		[captureInput.device lockForConfiguration:nil];
+//		captureInput.device.focusPointOfInterest = focusPoint;
+//		r = [self focusOnce];
+//		NSLog(@"focusOnce: %d", r);
+//		[captureInput.device unlockForConfiguration];
+//	}
 	return r;
 }
 
 -(bool)_setFocusMode:(AVCaptureFocusMode)mode{
 	bool r = true;
-	[captureInput.device lockForConfiguration:nil];
-	if( [captureInput.device isFocusModeSupported:mode] )	{
-		[captureInput.device setFocusMode:mode ];
+	
+	AVCaptureInput* currentCameraInput = [self.captureSession.inputs objectAtIndex:0];
+	AVCaptureDevice *acd = ((AVCaptureDeviceInput*)currentCameraInput).device;
+    [acd lockForConfiguration:nil];
+	if( [acd isFocusModeSupported:mode]){
+		[acd setFocusMode:mode];
 	} else {
 		r = false;
 	}
-	[captureInput.device unlockForConfiguration];
+	[acd unlockForConfiguration];
+	
+//	[captureInput.device lockForConfiguration:nil];
+//	if( [captureInput.device isFocusModeSupported:mode] )	{
+//		[captureInput.device setFocusMode:mode ];
+//	} else {
+//		r = false;
+//	}
+//	[captureInput.device unlockForConfiguration];
 	return r;
+	
+	
 }
 
 
@@ -363,7 +444,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 				
 				size_t iwidth = CVPixelBufferGetWidth(imageBuffer);
 				size_t iheight = CVPixelBufferGetHeight(imageBuffer);
-				cout<<ofToString(iwidth) + " , " + ofToString(iheight)<<endl;
+//				cout<<ofToString(iwidth) + " , " + ofToString(iheight)<<endl;
 //				texWidth = iwidth;
 //				texHeight = iheight;
 				
@@ -598,6 +679,13 @@ AVFoundationVideoGrabber::~AVFoundationVideoGrabber(){
 void AVFoundationVideoGrabber::ud(){
 	if(bIsInit){
 		[grabber updateTexture];
+	}
+}
+
+void AVFoundationVideoGrabber::switchCamera(){
+	if(grabber){
+		cout<<"Switching camera"<<endl;
+		[grabber switchCamera];
 	}
 }
 
