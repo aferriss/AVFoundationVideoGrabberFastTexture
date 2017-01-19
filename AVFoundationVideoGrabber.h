@@ -28,7 +28,7 @@ class AVFoundationVideoGrabber;
 	AVFoundationVideoGrabber * grabberPtr;
 }
 
--(BOOL)initCapture:(int)framerate capWidth:(int)w capHeight:(int)h;
+-(BOOL)initCapture:(int)framerate capWidth:(int)w capHeight:(int)h needsPixels:(BOOL)bNeedsPixels;
 -(void)startCapture;
 -(void)stopCapture;
 -(void)updateTexture;
@@ -61,13 +61,11 @@ class AVFoundationVideoGrabber{
 		void clear();
 		void setCaptureRate(int capRate);
 	
-        bool initGrabber(int w, int h);
+		bool initGrabber(int w, int h, bool bNeedsPixels = false);
         bool isInitialized();
 		void updatePixelsCB( CGImageRef & ref );
 	
 		void update();
-		void updateTexure(CMSampleBufferRef & sampleBuffer);
-		void ud();
 	
 		void focusOnce();
 		void setContinuousAutoFocus();
@@ -100,19 +98,12 @@ class AVFoundationVideoGrabber{
 		unsigned char * pixels;
 		bool newFrame;
 		bool bLock;
+		bool bNeedsPixels;
 	
 		int width, height;
 		
 		ofTexture * getTexture();
-	
-	
-		ofTexture textureOf;
-	
-//		CVOpenGLESTextureRef * getTextureRef(){
-//			return textureRef;
-//		}
-//	
-//		CVOpenGLESTextureRef * textureRef;
+		ofTexture texture;
 	
 	protected:
 		
@@ -122,8 +113,6 @@ class AVFoundationVideoGrabber{
 		bool bHavePixelsChanged;
 		
 		int fps;
-		ofTexture tex;
-//		ofTexture textureOf;
 		iOSVideoGrabber * grabber;
 		GLubyte *pixelsTmp;
 };

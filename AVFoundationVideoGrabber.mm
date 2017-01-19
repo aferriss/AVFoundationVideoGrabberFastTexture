@@ -28,6 +28,7 @@
 	CVImageBufferRef cvFrame;
 	BOOL hasNewFrame;
 	BOOL isFrameNew;
+	BOOL returnPixels;
 	size_t texWidth;
 	size_t texHeight;
 }
@@ -62,14 +63,17 @@
 		
 		texWidth = 0;
 		texHeight = 0;
+		
+		returnPixels = false;
 	}
 	return self;
 }
 
 
-- (BOOL)initCapture:(int)framerate capWidth:(int)w capHeight:(int)h{
+- (BOOL)initCapture:(int)framerate capWidth:(int)w capHeight:(int)h needsPixels:(BOOL)bNeedsPixels{
 	cvFrame = NULL;
 	hasNewFrame = NO;
+	returnPixels = bNeedsPixels;
 	CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, ofxiOSGetGLView().context, NULL, &videoTextureCache);
 	if (err)
 	{
@@ -149,8 +153,8 @@
 		}
 		self.captureSession = [[[AVCaptureSession alloc] init] autorelease];
 		
-		[self.captureSession beginConfiguration]; 
-		
+		[self.captureSession beginConfiguration];
+	
 		
 		
 //		NSString * preset = AVCaptureSessionPresetMedium;
@@ -289,7 +293,7 @@
 -(void) startCapture{
 
 	if( !bInitCalled ){
-		[self initCapture:30 capWidth:480 capHeight:360];
+		[self initCapture:30 capWidth:480 capHeight:360 needsPixels:NO];
 	}
 	
 	[self.captureSession startRunning];
@@ -327,17 +331,10 @@
 		[acd lockForConfiguration:nil];
 		acd.focusPointOfInterest = focusPoint;
 		r = [self focusOnce];
-		NSLog(@"focusOnce: %d", r);
+//		NSLog(@"focusOnce: %d", r);
 		[acd unlockForConfiguration];
 	}
 	
-//	if ( captureInput.device.focusPointOfInterestSupported){
-//		[captureInput.device lockForConfiguration:nil];
-//		captureInput.device.focusPointOfInterest = focusPoint;
-//		r = [self focusOnce];
-//		NSLog(@"focusOnce: %d", r);
-//		[captureInput.device unlockForConfiguration];
-//	}
 	return r;
 }
 
@@ -354,23 +351,13 @@
 	}
 	[acd unlockForConfiguration];
 	
-//	[captureInput.device lockForConfiguration:nil];
-//	if( [captureInput.device isFocusModeSupported:mode] )	{
-//		[captureInput.device setFocusMode:mode ];
-//	} else {
-//		r = false;
-//	}
-//	[captureInput.device unlockForConfiguration];
 	return r;
-	
-	
 }
 
 
 -(void) lockExposureAndFocus{
 
 	[captureInput.device lockForConfiguration:nil];
-	
 	//if( [captureInput.device isExposureModeSupported:AVCaptureExposureModeLocked] ) [captureInput.device setExposureMode:AVCaptureExposureModeLocked ];
 	if( [captureInput.device isFocusModeSupported:AVCaptureFocusModeLocked] )	[captureInput.device setFocusMode:AVCaptureFocusModeLocked ];
 	
@@ -424,7 +411,60 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 	   fromConnection:(AVCaptureConnection *)connection
 {
 	if(grabberPtr != NULL) {
-//		@autoreleasepool {
+		if(returnPixels){
+//			pixel stuff
+			@autoreleasepool {
+				CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+				// Lock the image buffer
+	
+				CVPixelBufferLockBaseAddress(imageBuffer,0);
+	
+				if(grabberPtr != NULL && grabberPtr->internalGlDataType == GL_BGRA) {
+	
+					unsigned int *isrc4 = (unsigned int *)CVPixelBufferGetBaseAddress(imageBuffer);
+	
+					unsigned int *idst4 = (unsigned int *)grabberPtr->pixels;
+					unsigned int *ilast4 = &isrc4[width*height-1];
+					while (isrc4 < ilast4){
+						*(idst4++) = *(isrc4++);
+					}
+					grabberPtr->newFrame=true;
+					CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+	
+				} else {
+					// Get information about the image
+					uint8_t *baseAddress	= (uint8_t *)CVPixelBufferGetBaseAddress(imageBuffer);
+					size_t bytesPerRow		= CVPixelBufferGetBytesPerRow(imageBuffer);
+					size_t widthIn			= CVPixelBufferGetWidth(imageBuffer);
+					size_t heightIn			= CVPixelBufferGetHeight(imageBuffer);
+	
+					// Create a CGImageRef from the CVImageBufferRef
+					CGColorSpaceRef colorSpace	= CGColorSpaceCreateDeviceRGB();
+	
+					CGContextRef newContext		= CGBitmapContextCreate(baseAddress, widthIn, heightIn, 8, bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+					CGImageRef newImage			= CGBitmapContextCreateImage(newContext);
+	
+					CGImageRelease(currentFrame);
+					currentFrame = CGImageCreateCopy(newImage);
+	
+					// We release some components
+					CGContextRelease(newContext);
+					CGColorSpaceRelease(colorSpace);
+	
+					// We relase the CGImageRef
+					CGImageRelease(newImage);
+	
+					// We unlock the  image buffer
+					CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+	
+	
+					if(grabberPtr != NULL && grabberPtr->bLock != true) {
+						grabberPtr->updatePixelsCB(currentFrame);
+					}
+				}
+			}
+		}else {
+			//texture stuff
 			CVOpenGLESTextureRef internalTexture = NULL;
 			CVImageBufferRef toRelease;
 			@synchronized (self) {
@@ -435,65 +475,11 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 				if(toRelease){
 					CVBufferRelease(toRelease);
 				}
-				
-	//			if(grabberPtr != NULL && grabberPtr->bLock != true) {
-	//				grabberPtr->updateTexure(sampleBuffer);
-	//			}
-				CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-//				CVPixelBufferLockBaseAddress(imageBuffer,0);
-				
-				size_t iwidth = CVPixelBufferGetWidth(imageBuffer);
-				size_t iheight = CVPixelBufferGetHeight(imageBuffer);
-//				cout<<ofToString(iwidth) + " , " + ofToString(iheight)<<endl;
-//				texWidth = iwidth;
-//				texHeight = iheight;
-				
-//				if (!videoTextureCache){
-//					NSLog(@"No video texture cache");
-//					return;
-//				}
-				
-//				CVReturn err = CVOpenGLESTextureCacheCreateTextureFromImage(
-//																			kCFAllocatorDefault,
-//																			videoTextureCache,
-//																			imageBuffer,
-//																			NULL,
-//																			GL_TEXTURE_2D,
-//																			GL_RGBA,
-//																			iwidth,
-//																			iheight,
-//																			GL_BGRA,
-//																			GL_UNSIGNED_BYTE,
-//																			0,
-//																			&internalTexture);
-//				
-//				if (err){
-//					NSLog(@"Error at CVOpenGLESTextureCacheCreateTextureFromImage %d", err);
-//				}
-//			
-//				unsigned int textureCacheID = CVOpenGLESTextureGetName(internalTexture);
-//				grabberPtr->textureOf.setUseExternalTextureID(textureCacheID);
-//				grabberPtr->textureOf.setTextureMinMagFilter(GL_LINEAR, GL_LINEAR);
-//				grabberPtr->textureOf.setTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-//				
-//				if(!ofIsGLProgrammableRenderer()) {
-//					grabberPtr->textureOf.bind();
-//					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-//					grabberPtr->textureOf.unbind();
-//				}
-//			
-//				CVPixelBufferUnlockBaseAddress(imageBuffer,0);
-	//				}
-			
-//				CVOpenGLESTextureCacheFlush(videoTextureCache, 0);
-//				if(internalTexture) {
-//					CFRelease(internalTexture);
-//					internalTexture = NULL;
-//				}
 			}
-//		}
+		}
 	}
 }
+
 
 - (void) updateTexture{
 	@synchronized (self) {
@@ -525,14 +511,14 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 				}
 				
 				unsigned int textureCacheID = CVOpenGLESTextureGetName(internalTexture);
-				grabberPtr->textureOf.setUseExternalTextureID(textureCacheID);
-				grabberPtr->textureOf.setTextureMinMagFilter(GL_LINEAR, GL_LINEAR);
-				grabberPtr->textureOf.setTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+				grabberPtr->texture.setUseExternalTextureID(textureCacheID);
+				grabberPtr->texture.setTextureMinMagFilter(GL_LINEAR, GL_LINEAR);
+				grabberPtr->texture.setTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 				
 				if(!ofIsGLProgrammableRenderer()) {
-					grabberPtr->textureOf.bind();
+					grabberPtr->texture.bind();
 					glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-					grabberPtr->textureOf.unbind();
+					grabberPtr->texture.unbind();
 				}
 			
 			CVPixelBufferUnlockBaseAddress(cvFrame, 0);
@@ -551,63 +537,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 	}
 }
 
-//- (void)captureOutput:(AVCaptureOutput *)captureOutput
-//didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
-//	   fromConnection:(AVCaptureConnection *)connection
-//{
-//	if(grabberPtr != NULL) {
-//		@autoreleasepool {
-//			CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-//			// Lock the image buffer
-//
-//			CVPixelBufferLockBaseAddress(imageBuffer,0);
-//
-//			if(grabberPtr != NULL && grabberPtr->internalGlDataType == GL_BGRA) {
-//
-//				unsigned int *isrc4 = (unsigned int *)CVPixelBufferGetBaseAddress(imageBuffer);
-//
-//				unsigned int *idst4 = (unsigned int *)grabberPtr->pixels;
-//				unsigned int *ilast4 = &isrc4[width*height-1];
-//				while (isrc4 < ilast4){
-//					*(idst4++) = *(isrc4++);
-//				}
-//				grabberPtr->newFrame=true;
-//				CVPixelBufferUnlockBaseAddress(imageBuffer,0);
-//
-//			} else {
-//				// Get information about the image
-//				uint8_t *baseAddress	= (uint8_t *)CVPixelBufferGetBaseAddress(imageBuffer);
-//				size_t bytesPerRow		= CVPixelBufferGetBytesPerRow(imageBuffer);
-//				size_t widthIn			= CVPixelBufferGetWidth(imageBuffer);
-//				size_t heightIn			= CVPixelBufferGetHeight(imageBuffer);
-//
-//				// Create a CGImageRef from the CVImageBufferRef
-//				CGColorSpaceRef colorSpace	= CGColorSpaceCreateDeviceRGB();
-//
-//				CGContextRef newContext		= CGBitmapContextCreate(baseAddress, widthIn, heightIn, 8, bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
-//				CGImageRef newImage			= CGBitmapContextCreateImage(newContext);
-//
-//				CGImageRelease(currentFrame);
-//				currentFrame = CGImageCreateCopy(newImage);
-//
-//				// We release some components
-//				CGContextRelease(newContext);
-//				CGColorSpaceRelease(colorSpace);
-//
-//				// We relase the CGImageRef
-//				CGImageRelease(newImage);
-//
-//				// We unlock the  image buffer
-//				CVPixelBufferUnlockBaseAddress(imageBuffer,0);
-//
-//
-//				if(grabberPtr != NULL && grabberPtr->bLock != true) {
-//					grabberPtr->updatePixelsCB(currentFrame);
-//				}
-//			}
-//		}
-//	}
-//}
+
 
 
 #pragma mark -
@@ -676,119 +606,34 @@ AVFoundationVideoGrabber::~AVFoundationVideoGrabber(){
 
 }
 
-void AVFoundationVideoGrabber::ud(){
-	if(bIsInit){
-		[grabber updateTexture];
-	}
-}
 
 void AVFoundationVideoGrabber::switchCamera(){
 	if(grabber){
-		cout<<"Switching camera"<<endl;
 		[grabber switchCamera];
 	}
 }
 
-void AVFoundationVideoGrabber::updateTexure(CMSampleBufferRef & sampleBuffer){
-	/*
-	if(bLock){
-		return;
-	}
-	
-	CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-	CVPixelBufferLockBaseAddress(imageBuffer,0);
-	
-	size_t iwidth = CVPixelBufferGetWidth(imageBuffer);
-	size_t iheight = CVPixelBufferGetHeight(imageBuffer);
-	
-//	CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(kCFAllocatorDefault,
-//															 1,
-//															 &kCFTypeDictionaryKeyCallBacks,
-//															 &kCFTypeDictionaryValueCallBacks);
-//	
-//	CFDictionaryRef empty = CFDictionaryCreate(kCFAllocatorDefault,
-//											   NULL,
-//											   NULL,
-//											   0,
-//											   &kCFTypeDictionaryKeyCallBacks,
-//											   &kCFTypeDictionaryValueCallBacks);
-//	
-//	CFDictionarySetValue(attrs,
-//						 kCVPixelBufferIOSurfacePropertiesKey,
-//						 empty);
-//	
-//	CVPixelBufferRef renderTarget = NULL;
-//	CVPixelBufferCreate(kCFAllocatorDefault, iwidth, iheight, kCVPixelFormatType_32BGRA, attrs, &renderTarget);
-	
-	
-
-	//			cout<<"buffersize = " + ofToString(iwidth) + " , " + ofToString(iheight)<<endl;
-	//			cout<<"tex Size = " + ofToString(grabberPtr->textureOf.getWidth()) + " , " + ofToString(grabberPtr->textureOf.getHeight())<<endl;
-
-	
-	if (!videoTextureCache){
-		NSLog(@"No video texture cache");
-		return;
-	}
-	
-	CVReturn err = CVOpenGLESTextureCacheCreateTextureFromImage(
-																kCFAllocatorDefault,
-																videoTextureCache,
-																imageBuffer,
-																NULL,
-																GL_TEXTURE_2D,
-																GL_RGBA,
-																iwidth,
-																iheight,
-																GL_BGRA,
-																GL_UNSIGNED_BYTE,
-																0,
-																&internalTexture);
-	
-	if (err){
-		NSLog(@"Error at CVOpenGLESTextureCacheCreateTextureFromImage %d", err);
-	}
-	
-
-	unsigned int textureCacheID = CVOpenGLESTextureGetName(internalTexture);
-	textureOf.setUseExternalTextureID(textureCacheID);
-	textureOf.setTextureMinMagFilter(GL_LINEAR, GL_LINEAR);
-	textureOf.setTextureWrap(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-	
-	if(!ofIsGLProgrammableRenderer()) {
-		textureOf.bind();
-		glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-		textureOf.unbind();
-	}
-	
-	CVPixelBufferUnlockBaseAddress(imageBuffer,0);
-	
-	CVOpenGLESTextureCacheFlush(videoTextureCache, 0);
-	
-	if(internalTexture) {
-		CFRelease(internalTexture);
-		internalTexture = NULL;
-	}
-	*/
-}
 
 void AVFoundationVideoGrabber::clear(){
+	
 	if( pixels != NULL ){
 		free(pixels);
 		pixels = NULL;
 		free(pixelsTmp);
 	}
-	//tex.clear();
+	texture.clear();
 }
 
 void AVFoundationVideoGrabber::setCaptureRate(int capRate){
 	fps = capRate;
 }
 
-bool AVFoundationVideoGrabber::initGrabber(int w, int h){
-	if( [grabber initCapture:fps capWidth:w capHeight:h] ) {
+bool AVFoundationVideoGrabber::initGrabber(int w, int h, bool bNp){
+	if( [grabber initCapture:fps capWidth:w capHeight:h needsPixels:bNp] ) {
 		grabber->grabberPtr = this;
-
+		
+		bNeedsPixels = bNp;
+		
 		if(ofGetOrientation() == OF_ORIENTATION_DEFAULT || ofGetOrientation() == OF_ORIENTATION_180) {
 			width = grabber->height;
 			height = grabber->width;
@@ -798,8 +643,8 @@ bool AVFoundationVideoGrabber::initGrabber(int w, int h){
 		}
 		
 		clear();
-		textureOf.allocate(w, h, GL_RGBA);
-		ofTextureData & texData = textureOf.getTextureData();
+		texture.allocate(w, h, GL_RGBA);
+		ofTextureData & texData = texture.getTextureData();
 		texData.tex_t = 1.0f; // these values need to be reset to 1.0 to work properly.
 		texData.tex_u = 1.0f; // assuming this is something to do with the way ios creates the texture cache.
 		
@@ -813,13 +658,6 @@ bool AVFoundationVideoGrabber::initGrabber(int w, int h){
 			pixels = (GLubyte *) malloc(width * height * 4);
 		}
 		
-//		CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, ofxiOSGetGLView().context, NULL, &videoTextureCache);
-//		CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, [EAGLContext currentContext], NULL, &videoTextureCache);
-
-//		if (err)
-//		{
-//			NSLog(@"Error at CVOpenGLESTextureCacheCreate %d", err);
-//		}
 		
 		[grabber startCapture];
 		
@@ -845,10 +683,16 @@ bool AVFoundationVideoGrabber::isInitialized(){
 }
 
 void AVFoundationVideoGrabber::update(){
-	newFrame = false;
-	if (bHavePixelsChanged == true){
-		newFrame = true;
-		bHavePixelsChanged = false;
+	if(bNeedsPixels){
+		newFrame = false;
+		if (bHavePixelsChanged == true){
+			newFrame = true;
+			bHavePixelsChanged = false;
+		}
+	} else {
+		if(bIsInit){
+			[grabber updateTexture];
+		}
 	}
 }
 
@@ -938,7 +782,7 @@ bool AVFoundationVideoGrabber::isFrameNew() {
 }
 
 ofTexture * AVFoundationVideoGrabber::getTexture() {
-	return &textureOf;
+	return &texture;
 }
 
 vector <ofVideoDevice> AVFoundationVideoGrabber::listDevices() {
