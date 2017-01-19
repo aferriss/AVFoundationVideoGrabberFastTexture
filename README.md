@@ -23,7 +23,7 @@ I also added a function for switching between the front and back camera:
 And lastly a function for focus
 ````
 void ofApp::touchDoubleTap(ofTouchEventArgs & touch){
-    video.touchFocusAt(ofPoint(touch.x, touch.y));
+    grabber.touchFocusAt(ofPoint(touch.x, touch.y));
     
 }
 ````
